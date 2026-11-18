@@ -41,10 +41,24 @@ button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
 .eq { background: var(--eq); } .eq:hover { background: var(--eq-h); }
 .clr { background: var(--clr); } .clr:hover { background: var(--clr-h); }
 .wide { grid-column: span 2; }
+.calculator { position: relative; overflow: hidden; }
+.topbar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+#histBtn { height: 34px; padding: 0 14px; font-size: .9rem; border-radius: 999px; background: var(--key); }
+.hist { position: absolute; inset: 0; background: var(--body); padding: 16px; display: none; flex-direction: column; z-index: 5; }
+.hist.open { display: flex; }
+.hist-head { display: flex; justify-content: space-between; align-items: center; color: var(--text); margin-bottom: 10px; }
+.hist-head h2 { margin: 0; font-size: 1.1rem; }
+.hist-head button { height: 34px; padding: 0 14px; font-size: .9rem; border-radius: 999px; }
+.hist-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.hist-item { text-align: right; height: auto; padding: 10px 12px; background: var(--screen); border-radius: 10px; width: 100%; }
+.hist-item .e { display: block; color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+.hist-item .r { display: block; color: var(--text); font-size: 1.4rem; font-weight: 600; overflow-wrap: anywhere; }
+.hist-empty { color: var(--muted); text-align: center; margin-top: 40px; }
 </style>
 </head>
 <body>
 <div class="calculator">
+  <div class="topbar"><button id="histBtn" type="button">History</button></div>
   <div class="screen" aria-live="polite">
     <div id="expr"></div>
     <div id="out">0</div>
@@ -67,6 +81,14 @@ button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
     <button class="wide" data-k="0">0</button>
     <button data-k=".">.</button>
     <button class="eq" data-k="=">=</button>
+  </div>
+
+  <div class="hist" id="hist" aria-hidden="true">
+    <div class="hist-head">
+      <h2>History</h2>
+      <div><button id="histClear" type="button" class="clr">Clear</button> <button id="histClose" type="button">Close</button></div>
+    </div>
+    <div class="hist-list" id="histList"></div>
   </div>
 </div>
 
@@ -141,7 +163,10 @@ button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
     exprEl.textContent = errored ? "" : pretty(expr);
     if (errored) { outEl.textContent = errored; return; }
     var p = livePreview();
-    outEl.textContent = p != null ? p : (expr ? pretty(currentNumber() || expr.slice(-1)) : "0");
+    if (p != null) outEl.textContent = p;
+    else if (!expr) outEl.textContent = "0";
+    else if (/^-?[\d.]+$/.test(expr)) outEl.textContent = expr;
+    else outEl.textContent = pretty(currentNumber() || expr.slice(-1));
   }
 
   function reset() { expr = ""; errored = false; justEvaluated = false; }
@@ -190,12 +215,61 @@ button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
       expr = res;
       justEvaluated = true;
       outEl.textContent = pretty(res);
+      addHistory(src, res);
       return "done";
     } catch (e) {
       errored = e.message === "div0" ? "Can’t divide by zero" : "Error";
       expr = "";
     }
   }
+
+  // ----- History (kept on this device) -----
+  var KEY = "calc-history-v1", MAX = 50;
+  var history = [];
+  try { history = JSON.parse(localStorage.getItem(KEY) || "[]"); if (!Array.isArray(history)) history = []; } catch (e) { history = []; }
+  var histEl = document.getElementById("hist");
+  var listEl = document.getElementById("histList");
+
+  function saveHistory() { try { localStorage.setItem(KEY, JSON.stringify(history)); } catch (e) {} }
+  function addHistory(e, r) {
+    history.unshift({ e: e, r: r });
+    if (history.length > MAX) history.length = MAX;
+    saveHistory();
+    renderHistory();
+  }
+  function renderHistory() {
+    listEl.innerHTML = "";
+    if (!history.length) {
+      var d = document.createElement("div");
+      d.className = "hist-empty";
+      d.textContent = "No calculations yet.";
+      listEl.appendChild(d);
+      return;
+    }
+    history.forEach(function (h) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "hist-item";
+      var e = document.createElement("span"); e.className = "e"; e.textContent = pretty(h.e) + " =";
+      var r = document.createElement("span"); r.className = "r"; r.textContent = pretty(h.r);
+      b.appendChild(e); b.appendChild(r);
+      b.addEventListener("click", function () {
+        expr = h.r; errored = false; justEvaluated = true;
+        exprEl.textContent = pretty(h.e) + " =";
+        outEl.textContent = pretty(h.r);
+        toggleHistory(false);
+      });
+      listEl.appendChild(b);
+    });
+  }
+  function toggleHistory(open) {
+    histEl.classList.toggle("open", open);
+    histEl.setAttribute("aria-hidden", open ? "false" : "true");
+  }
+  document.getElementById("histBtn").addEventListener("click", function () { toggleHistory(true); });
+  document.getElementById("histClose").addEventListener("click", function () { toggleHistory(false); });
+  document.getElementById("histClear").addEventListener("click", function () { history = []; saveHistory(); renderHistory(); });
+  renderHistory();
 
   function press(k) {
     var done;
@@ -216,6 +290,7 @@ button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
   document.addEventListener("keydown", function (e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     var k = e.key;
+    if (histEl.classList.contains("open")) { if (k === "Escape") toggleHistory(false); return; }
     if (/^[0-9]$/.test(k) || k === ".") press(k);
     else if (k === "," ) press(".");
     else if ("+-*/%".indexOf(k) > -1 && k.length === 1) press(k);
