@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Calculator</title>
+<meta name="theme-color" content="#1f2937">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Calc">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+:root {
+  --bg: #eef2f7; --body: #1f2937; --screen: #111827; --text: #ffffff; --muted: #9ca3af;
+  --key: #374151; --key-h: #4b5563; --op: #f59e0b; --op-h: #d97706;
+  --eq: #2563eb; --eq-h: #1d4ed8; --clr: #dc2626; --clr-h: #b91c1c;
+  color-scheme: light;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0b1020; --body: #161e2e; --screen: #0b1220; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #0b1020; --body: #161e2e; --screen: #0b1220; color-scheme: dark; }
+* { box-sizing: border-box; font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif; }
+html, body { height: 100%; }
+body { margin: 0; display: grid; place-items: center; background: var(--bg); }
+.calculator { width: min(340px, 92vw); padding: 16px; border-radius: 16px; background: var(--body); box-shadow: 0 12px 30px rgba(0,0,0,.2); }
+.screen { background: var(--screen); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; text-align: right; min-height: 88px; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; }
+#expr { color: var(--muted); font-size: 1rem; min-height: 1.3em; white-space: nowrap; overflow-x: auto; }
+#out { color: var(--text); font-size: 2.2rem; font-weight: 600; white-space: nowrap; overflow-x: auto; }
+.buttons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+button { height: 60px; border: none; border-radius: 10px; background: var(--key); color: #fff; font-size: 1.25rem; cursor: pointer; }
+button:hover { background: var(--key-h); }
+button:active { transform: scale(.96); }
+button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+.op { background: var(--op); } .op:hover { background: var(--op-h); }
+.eq { background: var(--eq); } .eq:hover { background: var(--eq-h); }
+.clr { background: var(--clr); } .clr:hover { background: var(--clr-h); }
+.wide { grid-column: span 2; }
+</style>
+</head>
+<body>
+<div class="calculator">
+  <div class="screen" aria-live="polite">
+    <div id="expr"></div>
+    <div id="out">0</div>
+  </div>
+  <div class="buttons">
+    <button class="clr" data-k="C">C</button>
+    <button data-k="Back" aria-label="Delete">⌫</button>
+    <button class="op" data-k="%">%</button>
+    <button class="op" data-k="/">÷</button>
+
+    <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+    <button class="op" data-k="*">×</button>
+
+    <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+    <button class="op" data-k="-">−</button>
+
+    <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+    <button class="op" data-k="+">+</button>
+
+    <button class="wide" data-k="0">0</button>
+    <button data-k=".">.</button>
+    <button class="eq" data-k="=">=</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  var exprEl = document.getElementById("expr");
+  var outEl = document.getElementById("out");
+  var expr = "";        // internal: digits . + - * / %
+  var justEvaluated = false;
+  var errored = false;
+  var OPS = "+-*/";
+  var SHOW = { "*": "×", "/": "÷", "-": "−" };
+
+  function pretty(s) { return s.replace(/[*\/-]/g, function (c) { return SHOW[c]; }); }
+
+  // Safe recursive-descent parser: + - * / unary minus, postfix %
+  function evaluate(src) {
+    var i = 0;
+    function peek() { return src[i]; }
+    function number() {
+      var m = /^\d*\.?\d+|^\d+\.?/.exec(src.slice(i));
+      if (!m) throw new Error("syntax");
+      i += m[0].length;
+      return parseFloat(m[0]);
+    }
+    function factor() {
+      if (peek() === "-") { i++; return -factor(); }
+      var v = number();
+      while (peek() === "%") { i++; v /= 100; }
+      return v;
+    }
+    function term() {
+      var v = factor();
+      while (peek() === "*" || peek() === "/") {
+        var op = src[i++], r = factor();
+        if (op === "/") { if (r === 0) throw new Error("div0"); v /= r; } else v *= r;
+      }
+      return v;
+    }
+    function sum() {
+      var v = term();
+      while (peek() === "+" || peek() === "-") {
+        var op = src[i++], r = term();
+        v = op === "+" ? v + r : v - r;
+      }
+      return v;
+    }
+    var result = sum();
+    if (i < src.length) throw new Error("syntax");
+    return result;
+  }
+
+  function fmt(n) {
+    if (!isFinite(n)) throw new Error("range");
+    var r = Number(n.toPrecision(12));
+    var s = String(r);
+    return s.indexOf("e") > -1 ? r.toExponential(6) : s;
+  }
+
+  function currentNumber() {
+    var m = /[\d.]*$/.exec(expr);
+    return m ? m[0] : "";
+  }
+
+  function livePreview() {
+    if (!expr || /[+\-*/]$/.test(expr)) return null;
+    if (!/[+\-*/%]/.test(expr.replace(/^-/, ""))) return null;
+    try { return fmt(evaluate(expr)); } catch (e) { return null; }
+  }
+
+  function update() {
+    exprEl.textContent = errored ? "" : pretty(expr);
+    if (errored) { outEl.textContent = errored; return; }
+    var p = livePreview();
+    outEl.textContent = p != null ? p : (expr ? pretty(currentNumber() || expr.slice(-1)) : "0");
+  }
+
+  function reset() { expr = ""; errored = false; justEvaluated = false; }
+
+  function digit(d) {
+    if (errored || justEvaluated) reset();
+    var cur = currentNumber();
+    if (cur === "0" && d !== ".") expr = expr.slice(0, -1);
+    if (expr.slice(-1) === "%") return;
+    if (cur.length >= 15) return;
+    expr += d;
+  }
+  function dot() {
+    if (errored || justEvaluated) reset();
+    if (expr.slice(-1) === "%") return;
+    var cur = currentNumber();
+    if (cur.indexOf(".") > -1) return;
+    expr += cur === "" ? "0." : ".";
+  }
+  function op(o) {
+    if (errored) reset();
+    justEvaluated = false;
+    if (o === "%") {
+      if (/\d$/.test(expr) || expr.slice(-1) === "%") expr += "%";
+      return;
+    }
+    if (expr === "") { if (o === "-") expr = "-"; return; }
+    if (expr === "-") return;
+    if (OPS.indexOf(expr.slice(-1)) > -1) {
+      expr = expr.slice(0, -1);
+      if (expr === "") { if (o === "-") expr = "-"; return; }
+    }
+    expr += o;
+  }
+  function back() {
+    if (errored || justEvaluated) { reset(); return; }
+    expr = expr.slice(0, -1);
+  }
+  function equals() {
+    if (errored || !expr) return;
+    var src = expr.replace(/[+\-*/]$/, "");
+    if (!src || src === "-") return;
+    try {
+      var res = fmt(evaluate(src));
+      exprEl.textContent = pretty(src) + " =";
+      expr = res;
+      justEvaluated = true;
+      outEl.textContent = pretty(res);
+      return "done";
+    } catch (e) {
+      errored = e.message === "div0" ? "Can’t divide by zero" : "Error";
+      expr = "";
+    }
+  }
+
+  function press(k) {
+    var done;
+    if (k >= "0" && k <= "9" && k.length === 1) digit(k);
+    else if (k === ".") dot();
+    else if (k === "C") reset();
+    else if (k === "Back") back();
+    else if (k === "=") done = equals();
+    else op(k);
+    if (done !== "done") update();
+  }
+
+  document.querySelector(".buttons").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (b) press(b.getAttribute("data-k"));
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var k = e.key;
+    if (/^[0-9]$/.test(k) || k === ".") press(k);
+    else if (k === "," ) press(".");
+    else if ("+-*/%".indexOf(k) > -1 && k.length === 1) press(k);
+    else if (k === "Enter" || k === "=") { e.preventDefault(); press("="); }
+    else if (k === "Backspace") press("Back");
+    else if (k === "Escape" || k === "Delete") press("C");
+  });
+
+  update();
+})();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
+}
+</script>
+</body>
+</html>
